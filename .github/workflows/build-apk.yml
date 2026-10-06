@@ -1,0 +1,49 @@
+name: Build APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate project (unzips an uploaded .zip when gradlew is not at the repo root)
+        id: locate
+        shell: bash
+        run: |
+          if [ -f gradlew ]; then
+            dir="."
+          else
+            zip=$(find . -maxdepth 2 -iname '*.zip' -not -path './.git/*' | head -n 1)
+            if [ -z "$zip" ]; then echo "No gradlew and no .zip file found in the repo."; exit 1; fi
+            echo "Unpacking $zip"
+            rm -rf _project && mkdir _project
+            unzip -q "$zip" -d _project
+            gw=$(find _project -maxdepth 3 -name gradlew | head -n 1)
+            if [ -z "$gw" ]; then echo "gradlew not found inside $zip"; exit 1; fi
+            dir=$(dirname "$gw")
+          fi
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/*.zip') }}
+      - run: chmod +x gradlew
+        working-directory: ${{ steps.locate.outputs.dir }}
+      - run: ./gradlew assembleDebug --no-daemon
+        working-directory: ${{ steps.locate.outputs.dir }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: untimed-debug-apk
+          path: ${{ steps.locate.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
+      - name: Unit tests (reported, does not block the APK)
+        continue-on-error: true
+        run: ./gradlew testDebugUnitTest --no-daemon
+        working-directory: ${{ steps.locate.outputs.dir }}
